@@ -16,6 +16,7 @@ import psutil
 import yaml
 import glob
 import re
+import traceback
 
 from ccmlib.common import CASSANDRA_SH, BIN_DIR
 from six import print_
@@ -655,13 +656,25 @@ class ScyllaNode(Node):
         """
         Kill scylla-jmx in case of timeout, to supply enough debugging information
         """
+
         try:
             return super().nodetool(*args, **kwargs)
         except subprocess.TimeoutExpired:
-            self.error("nodetool timeout, going to kill scylla-jmx with SIGQUIT")
-            self.kill_jmx(signal.SIGQUIT)
+            self.error("nodetool timeout, trying to print scylla-jmx stack")
+            self.dump_jmx()
             time.sleep(5)  # give the java process time to print the threaddump into the log
             raise
+
+    def dump_jmx(self):
+        self._update_jmx_pid()
+        jstack_location = "jstack"
+        if os.environ.get('JAVA_HOME'):
+            jstack_location = os.path.abspath(os.path.join(os.environ['JAVA_HOME'], 'bin', 'jstack'))
+        jstack_cmd = [jstack_location, '-l', str(self.jmx_pid)]
+        p = subprocess.Popen(jstack_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+        stdout, stderr = p.communicate()
+        self.error(stdout)
+        print(stdout)
 
     def kill_jmx(self, __signal):
         if self.jmx_pid:
